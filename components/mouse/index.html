@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mouse Dynamics Capture</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card-bg: #1e293b;
+      --border: #334155;
+      --primary: #38bdf8;
+      --target: #f43f5e;
+      --target-glow: rgba(244, 63, 94, 0.4);
+      --success: #22c55e;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    body {
+      background: transparent;
+      color: var(--text);
+      padding: 10px;
+    }
+    .container {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      max-width: 680px;
+      margin: 0 auto;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    }
+    .header {
+      margin-bottom: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .title {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--primary);
+    }
+    .instruction {
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+    .canvas-wrapper {
+      position: relative;
+      width: 100%;
+      height: 340px;
+      background: #090d16;
+      border: 2px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      cursor: crosshair;
+    }
+    #drawCanvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+    }
+    .target-circle {
+      position: absolute;
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      background: var(--target);
+      box-shadow: 0 0 16px var(--target-glow);
+      border: 3px solid #fff;
+      transform: translate(-50%, -50%);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      font-size: 14px;
+      color: #fff;
+      user-select: none;
+      animation: pulse 1.2s infinite ease-in-out;
+    }
+    @keyframes pulse {
+      0% { transform: translate(-50%, -50%) scale(1); box-shadow: 0 0 10px var(--target-glow); }
+      50% { transform: translate(-50%, -50%) scale(1.12); box-shadow: 0 0 22px var(--target-glow); }
+      100% { transform: translate(-50%, -50%) scale(1); box-shadow: 0 0 10px var(--target-glow); }
+    }
+    .controls {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 12px;
+    }
+    .progress-tag {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--primary);
+    }
+    .btn {
+      background: #334155;
+      color: var(--text);
+      border: none;
+      border-radius: 6px;
+      padding: 8px 14px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn:hover { background: #475569; }
+    .status-toast {
+      display: none;
+      background: rgba(34, 197, 94, 0.15);
+      border: 1px solid var(--success);
+      color: var(--success);
+      padding: 8px;
+      border-radius: 6px;
+      font-size: 13px;
+      text-align: center;
+      margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div>
+        <div class="title">🖱️ Mouse Dynamics Tracker</div>
+        <div class="instruction">Move your pointer naturally and click the glowing numbered targets in sequence.</div>
+      </div>
+      <div class="progress-tag" id="progressText">Target 1 of 3</div>
+    </div>
+
+    <div class="canvas-wrapper" id="arena">
+      <canvas id="drawCanvas"></canvas>
+      <div class="target-circle" id="targetBtn" style="left: 120px; top: 100px;">1</div>
+    </div>
+
+    <div class="controls">
+      <div style="font-size: 12px; color: var(--text-muted);" id="coordInfo">Hover over arena to begin recording trajectory</div>
+      <button class="btn" id="resetBtn">Restart Task</button>
+    </div>
+
+    <div class="status-toast" id="statusToast">
+      ✓ Mouse trajectory and clicks captured! Sending to BioAuth engine...
+    </div>
+  </div>
+
+  <script>
+    function sendMessage(type, data) {
+      window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type: type }, data), "*");
+    }
+    function setComponentValue(value) {
+      sendMessage("streamlit:setComponentValue", { value: value });
+    }
+    function setFrameHeight(height) {
+      sendMessage("streamlit:setFrameHeight", { height: height || document.body.scrollHeight + 20 });
+    }
+
+    const arena = document.getElementById("arena");
+    const canvas = document.getElementById("drawCanvas");
+    const ctx = canvas.getContext("2d");
+    const targetBtn = document.getElementById("targetBtn");
+    const progressText = document.getElementById("progressText");
+    const coordInfo = document.getElementById("coordInfo");
+    const resetBtn = document.getElementById("resetBtn");
+    const statusToast = document.getElementById("statusToast");
+
+    // Dynamic targets
+    const TARGETS = [
+      { x: 120, y: 110 },
+      { x: 480, y: 160 },
+      { x: 280, y: 270 }
+    ];
+
+    let currentTargetIdx = 0;
+    let trajectory = [];
+    let clicks = [];
+    let lastMouseDown = 0;
+    let isTracking = true;
+
+    function resizeCanvas() {
+      canvas.width = arena.clientWidth;
+      canvas.height = arena.clientHeight;
+    }
+    window.addEventListener("resize", resizeCanvas);
+    resizeCanvas();
+
+    function setTargetPos(idx) {
+      if (idx < TARGETS.length) {
+        targetBtn.style.left = TARGETS[idx].x + "px";
+        targetBtn.style.top = TARGETS[idx].y + "px";
+        targetBtn.textContent = (idx + 1);
+        progressText.textContent = `Target ${idx + 1} of ${TARGETS.length}`;
+      }
+    }
+
+    function drawTrail() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (trajectory.length < 2) return;
+
+      ctx.strokeStyle = "rgba(56, 189, 248, 0.4)";
+      ctx.lineWidth = 2;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(trajectory[0].x, trajectory[0].y);
+      for (let i = 1; i < trajectory.length; i++) {
+        ctx.lineTo(trajectory[i].x, trajectory[i].y);
+      }
+      ctx.stroke();
+    }
+
+    arena.addEventListener("mousemove", (e) => {
+      if (!isTracking) return;
+      const rect = arena.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const t = performance.now();
+
+      trajectory.push({ x: round(x, 1), y: round(y, 1), t: round(t, 1) });
+      coordInfo.textContent = `Path: ${trajectory.length} pts | Pos: (${Math.round(x)}, ${Math.round(y)})`;
+      drawTrail();
+    });
+
+    arena.addEventListener("mousedown", (e) => {
+      lastMouseDown = performance.now();
+    });
+
+    targetBtn.addEventListener("mouseup", (e) => {
+      if (!isTracking) return;
+      const tUp = performance.now();
+      const tDown = lastMouseDown || (tUp - 80);
+      const rect = arena.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+
+      clicks.push({
+        x: round(x, 1),
+        y: round(y, 1),
+        t_down: round(tDown, 1),
+        t_up: round(tUp, 1)
+      });
+
+      currentTargetIdx++;
+      if (currentTargetIdx < TARGETS.length) {
+        setTargetPos(currentTargetIdx);
+      } else {
+        // Completed all targets!
+        isTracking = false;
+        targetBtn.style.display = "none";
+        progressText.textContent = "✓ Completed!";
+        statusToast.style.display = "block";
+
+        setComponentValue({
+          modality: "mouse",
+          trajectory: trajectory,
+          clicks: clicks,
+          timestamp: Date.now()
+        });
+
+        setTimeout(resetTask, 2000);
+      }
+    });
+
+    function resetTask() {
+      trajectory = [];
+      clicks = [];
+      currentTargetIdx = 0;
+      isTracking = true;
+      targetBtn.style.display = "flex";
+      setTargetPos(0);
+      statusToast.style.display = "none";
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      coordInfo.textContent = "Hover over arena to begin recording trajectory";
+    }
+
+    resetBtn.addEventListener("click", resetTask);
+
+    function round(num, decimals) {
+      return Number(Math.round(num + 'e' + decimals) + 'e-' + decimals);
+    }
+
+    // Streamlit Component Handlers
+    window.addEventListener("message", (event) => {
+      if (event.data.type === "streamlit:render") {
+        setFrameHeight();
+      }
+    });
+
+    sendMessage("streamlit:componentReady", { apiVersion: 1 });
+    setTargetPos(0);
+    setTimeout(() => setFrameHeight(), 100);
+  </script>
+</body>
+</html>

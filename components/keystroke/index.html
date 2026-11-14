@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Keystroke Dynamics Capture</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card-bg: #1e293b;
+      --border: #334155;
+      --primary: #38bdf8;
+      --primary-hover: #0284c7;
+      --success: #22c55e;
+      --error: #ef4444;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    body {
+      background: transparent;
+      color: var(--text);
+      padding: 10px;
+    }
+    .container {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      max-width: 680px;
+      margin: 0 auto;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    }
+    .header {
+      margin-bottom: 15px;
+    }
+    .title {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--primary);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .instruction {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+    .phrase-box {
+      background: #090d16;
+      border: 1px dashed #475569;
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin: 15px 0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 17px;
+      letter-spacing: 0.8px;
+      display: flex;
+      flex-wrap: wrap;
+    }
+    .char-pending { color: #64748b; }
+    .char-match { color: var(--success); font-weight: 600; }
+    .char-error { color: var(--error); background: rgba(239, 68, 68, 0.2); border-radius: 2px; }
+    
+    .input-box {
+      width: 100%;
+      background: #0f172a;
+      border: 2px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+      color: var(--text);
+      font-size: 16px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .input-box:focus {
+      border-color: var(--primary);
+    }
+    .controls {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 15px;
+    }
+    .stats {
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+    .btn {
+      background: var(--primary);
+      color: #0f172a;
+      border: none;
+      border-radius: 6px;
+      padding: 9px 18px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s, opacity 0.2s;
+    }
+    .btn:hover:not(:disabled) {
+      background: var(--primary-hover);
+      color: #fff;
+    }
+    .btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .btn-secondary {
+      background: #334155;
+      color: var(--text);
+      margin-right: 8px;
+    }
+    .btn-secondary:hover {
+      background: #475569;
+    }
+    .success-badge {
+      display: none;
+      background: rgba(34, 197, 94, 0.15);
+      border: 1px solid var(--success);
+      color: var(--success);
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      margin-top: 12px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="title">⌨️ Keystroke Dynamics Recorder</div>
+      <div class="instruction">Type the exact phrase below at your natural, comfortable typing speed.</div>
+    </div>
+
+    <div class="phrase-box" id="phraseDisplay"></div>
+
+    <input
+      type="text"
+      class="input-box"
+      id="typeInput"
+      placeholder="Click here and begin typing the phrase..."
+      autocomplete="off"
+      autocorrect="off"
+      autocapitalize="off"
+      spellcheck="false"
+    />
+
+    <div class="controls">
+      <div class="stats" id="statusStats">Keys captured: 0</div>
+      <div>
+        <button class="btn btn-secondary" id="resetBtn">Reset</button>
+        <button class="btn" id="submitBtn" disabled>Submit Sample</button>
+      </div>
+    </div>
+
+    <div class="success-badge" id="successMsg">
+      ✓ Keystroke dynamics captured successfully! Sending to Streamlit...
+    </div>
+  </div>
+
+  <script>
+    // Streamlit Component Protocol
+    function sendMessage(type, data) {
+      window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type: type }, data), "*");
+    }
+    function setComponentValue(value) {
+      sendMessage("streamlit:setComponentValue", { value: value });
+    }
+    function setFrameHeight(height) {
+      sendMessage("streamlit:setFrameHeight", { height: height || document.body.scrollHeight + 20 });
+    }
+
+    let targetPhrase = "bioauth secure access protocol";
+    let events = [];
+    let isComplete = false;
+
+    const phraseDisplay = document.getElementById("phraseDisplay");
+    const typeInput = document.getElementById("typeInput");
+    const statusStats = document.getElementById("statusStats");
+    const submitBtn = document.getElementById("submitBtn");
+    const resetBtn = document.getElementById("resetBtn");
+    const successMsg = document.getElementById("successMsg");
+
+    function renderTargetPhrase(typed = "") {
+      phraseDisplay.innerHTML = "";
+      for (let i = 0; i < targetPhrase.length; i++) {
+        const span = document.createElement("span");
+        span.textContent = targetPhrase[i] === " " ? "\u00A0" : targetPhrase[i];
+        if (i < typed.length) {
+          if (typed[i] === targetPhrase[i]) {
+            span.className = "char-match";
+          } else {
+            span.className = "char-error";
+          }
+        } else {
+          span.className = "char-pending";
+        }
+        phraseDisplay.appendChild(span);
+      }
+    }
+
+    function resetCapture() {
+      events = [];
+      isComplete = false;
+      typeInput.value = "";
+      renderTargetPhrase("");
+      statusStats.textContent = "Keys captured: 0";
+      submitBtn.disabled = true;
+      successMsg.style.display = "none";
+      typeInput.focus();
+    }
+
+    typeInput.addEventListener("keydown", (e) => {
+      if (e.key === "Tab") return;
+      events.push({
+        key: e.key,
+        event: "keydown",
+        timestamp: performance.now()
+      });
+      statusStats.textContent = `Keys captured: ${events.length}`;
+    });
+
+    typeInput.addEventListener("keyup", (e) => {
+      if (e.key === "Tab") return;
+      events.push({
+        key: e.key,
+        event: "keyup",
+        timestamp: performance.now()
+      });
+
+      const currentVal = typeInput.value;
+      renderTargetPhrase(currentVal);
+
+      if (currentVal === targetPhrase) {
+        isComplete = true;
+        submitBtn.disabled = false;
+        statusStats.textContent = `✓ Phrase matched! (${events.length} events)`;
+      } else {
+        submitBtn.disabled = true;
+      }
+    });
+
+    submitBtn.addEventListener("click", () => {
+      if (!isComplete && events.length < 10) return;
+      successMsg.style.display = "block";
+      setComponentValue({
+        modality: "keystroke",
+        events: events,
+        phrase: typeInput.value,
+        timestamp: Date.now()
+      });
+      setTimeout(() => {
+        resetCapture();
+      }, 1500);
+    });
+
+    resetBtn.addEventListener("click", resetCapture);
+
+    // Streamlit Listeners
+    window.addEventListener("message", (event) => {
+      if (event.data.type === "streamlit:render") {
+        if (event.data.args && event.data.args.targetPhrase) {
+          targetPhrase = event.data.args.targetPhrase;
+        }
+        renderTargetPhrase(typeInput.value);
+        setFrameHeight();
+      }
+    });
+
+    // Initialize
+    sendMessage("streamlit:componentReady", { apiVersion: 1 });
+    renderTargetPhrase();
+    setTimeout(() => setFrameHeight(), 100);
+  </script>
+</body>
+</html>
